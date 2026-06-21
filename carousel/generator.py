@@ -5,709 +5,656 @@ Format: 4:5 (1080×1350 px)
 Usage: python3 generator.py content.json [output_dir] [--photo /path/to/photo.jpg]
 """
 
-import json
-import sys
-import os
-import base64
-import argparse
+import json, sys, os, base64, argparse
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 CHROMIUM_PATH = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
 FONTS_DIR     = Path(__file__).parent / "fonts"
-SLIDE_W       = 1080
-SLIDE_H       = 1350   # 4:5
+SLIDE_W, SLIDE_H = 1080, 1350
 
-# ── embed fonts as base64 so rendering works offline ──────────────────────────
-def _b64font(filename: str) -> str:
-    path = FONTS_DIR / filename
-    if not path.exists():
+# ── fonts ──────────────────────────────────────────────────────────────────────
+def _b64(filename):
+    p = FONTS_DIR / filename
+    return base64.b64encode(p.read_bytes()).decode() if p.exists() else ""
+
+def font_css():
+    bb = _b64("BebasNeue.ttf")
+    mr = _b64("Montserrat-Regular.ttf")
+    mb = _b64("Montserrat-Bold.ttf")
+    me = _b64("Montserrat-ExtraBold.ttf")
+    mx = _b64("Montserrat-Black.ttf")
+    out = ""
+    # "Display" = Bebas for Latin digits/latin, Montserrat Black for Cyrillic
+    if bb:
+        out += f"""@font-face{{font-family:'Display';font-weight:400;
+  src:url('data:font/truetype;base64,{bb}')format('truetype');
+  unicode-range:U+0020-007F,U+00A0-00FF;}}"""
+    if mx:
+        out += f"""@font-face{{font-family:'Display';font-weight:400;
+  src:url('data:font/truetype;base64,{mx}')format('truetype');
+  unicode-range:U+0400-04FF,U+0500-052F,U+1C80-1C8F;}}"""
+    if mr:
+        out += f"""@font-face{{font-family:'Montserrat';font-weight:400;
+  src:url('data:font/truetype;base64,{mr}')format('truetype');}}"""
+    if mb:
+        out += f"""@font-face{{font-family:'Montserrat';font-weight:700;
+  src:url('data:font/truetype;base64,{mb}')format('truetype');}}"""
+    if me:
+        out += f"""@font-face{{font-family:'Montserrat';font-weight:800;
+  src:url('data:font/truetype;base64,{me}')format('truetype');}}"""
+    if mx:
+        out += f"""@font-face{{font-family:'Montserrat';font-weight:900;
+  src:url('data:font/truetype;base64,{mx}')format('truetype');}}"""
+    return out
+
+def encode_photo(path):
+    if not path or not Path(path).exists():
         return ""
-    return base64.b64encode(path.read_bytes()).decode()
-
-def _font_face(family: str, weight: int, filename: str) -> str:
-    b64 = _b64font(filename)
-    if not b64:
-        return ""
-    return f"""@font-face {{
-  font-family: '{family}';
-  font-weight: {weight};
-  font-style: normal;
-  src: url('data:font/truetype;base64,{b64}') format('truetype');
-}}"""
-
-def build_font_css() -> str:
-    return "\n".join([
-        _font_face("BebasNeue",  400, "BebasNeue.ttf"),
-        _font_face("Montserrat", 400, "Montserrat-Regular.ttf"),
-        _font_face("Montserrat", 700, "Montserrat-Bold.ttf"),
-        _font_face("Montserrat", 800, "Montserrat-ExtraBold.ttf"),
-        _font_face("Montserrat", 900, "Montserrat-Black.ttf"),
-    ])
-
-# ── encode photo for inline embedding ─────────────────────────────────────────
-def encode_photo(photo_path: str) -> str:
-    if not photo_path or not Path(photo_path).exists():
-        return ""
-    data = Path(photo_path).read_bytes()
-    b64  = base64.b64encode(data).decode()
-    ext  = Path(photo_path).suffix.lower().lstrip(".")
+    data = Path(path).read_bytes()
+    ext  = Path(path).suffix.lower().lstrip(".")
     mime = "jpeg" if ext in ("jpg","jpeg") else ext
-    return f"data:image/{mime};base64,{b64}"
+    return f"data:image/{mime};base64,{base64.b64encode(data).decode()}"
 
-# ── shared CSS ─────────────────────────────────────────────────────────────────
+# ── CSS ────────────────────────────────────────────────────────────────────────
 BASE_CSS = """
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-body {
-  background: #0C0E0A;
-  color: #fff;
+:root {
+  --bg:      #0A0C08;
+  --green:   #C8FF00;
+  --white:   #F2F2EE;
+  --gray:    #5A5A5A;
+  --gray2:   #333;
+  --surface: #111408;
+  --border:  #1C2214;
+  --deco:    #111408;
 }
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--white); }
 
 .slide {
   width: 1080px;
   height: 1350px;
-  background: #0C0E0A;
+  background: var(--bg);
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-/* typography helpers */
-.fn-bebas    { font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif; }
-.fn-mont     { font-family: 'Montserrat', 'Arial', sans-serif; }
-
-.h-white { color: #ffffff; }
-.h-green { color: #C5FF00; }
-
-/* ── SHARED ELEMENTS ── */
-
-.tag {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
+/* ── typography ── */
+.t-display {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   text-transform: uppercase;
-  color: #888;
-  display: flex;
-  align-items: center;
-  gap: 9px;
+  line-height: 0.92;
 }
-.tag::before {
-  content: '+';
-  color: #C5FF00;
-  font-size: 17px;
-  font-weight: 900;
-  line-height: 1;
+.t-ui {
+  font-family: 'Montserrat', Arial, sans-serif;
 }
 
-.brand {
+.c-white { color: var(--white); }
+.c-green { color: var(--green); }
+.c-gray  { color: var(--gray);  }
+
+/* ── shared atoms ── */
+
+/* eyebrow tag */
+.eyebrow {
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 17px;
+  font-size: 12px;
   font-weight: 700;
-  color: #444;
-  letter-spacing: 0.05em;
-}
-
-.counter {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 17px;
-  font-weight: 700;
-  color: #444;
-  letter-spacing: 0.04em;
-}
-
-.bottom-bar {
-  position: absolute;
-  bottom: 50px;
-  left: 60px;
-  right: 60px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-/* large background deco number */
-.deco-num {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 460px;
-  line-height: 0.85;
-  color: #141810;
-  position: absolute;
-  right: -10px;
-  top: 30px;
-  user-select: none;
-  letter-spacing: -0.02em;
-  z-index: 0;
-}
-
-/* pill badges */
-.pills { display: flex; gap: 12px; flex-wrap: wrap; }
-.pill {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: #161a10;
-  border: 1px solid #272e1c;
-  border-radius: 40px;
-  padding: 11px 22px;
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  color: #ccc;
-  letter-spacing: 0.03em;
-}
-.pill-dot { width: 7px; height: 7px; border-radius: 50%; background: #C5FF00; }
-
-/* ── SLIDE 1 — COVER ── */
-
-.cover .photo-wrap {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-.cover .photo-wrap img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top center;
-}
-/* dark gradient overlay: bottom-heavy + left fade */
-.cover .photo-wrap::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(to right,  #0C0E0A 0%, #0C0E0Acc 35%, transparent 65%),
-    linear-gradient(to top,    #0C0E0A 0%, #0C0E0Aaa 30%, transparent 60%);
-  z-index: 1;
-}
-/* no-photo fallback */
-.cover .photo-placeholder {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, #1a1f14 0%, #0c0e0a 60%);
-  z-index: 0;
-}
-
-.cover .content {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 0 60px 140px;
-  z-index: 2;
-}
-
-.cover .cover-eyebrow {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: #888;
+  color: var(--gray);
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 24px;
 }
-.cover .cover-eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: #C5FF00; }
-
-.cover .headline {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 112px;
-  line-height: 0.95;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-bottom: 26px;
+.eyebrow-dot {
+  width: 6px; height: 6px;
+  background: var(--green);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+/* thin rule below eyebrow */
+.eyebrow-rule {
+  width: 40px; height: 1px;
+  background: var(--green);
+  opacity: 0.5;
+  margin-left: 4px;
 }
 
-.cover .subtext {
+/* bottom bar */
+.btm {
+  position: absolute;
+  bottom: 52px;
+  left: 64px;
+  right: 64px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 10;
+}
+.brand {
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 18px;
-  font-weight: 400;
-  color: #aaa;
-  line-height: 1.55;
-  max-width: 480px;
-  margin-bottom: 48px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #363636;
+  letter-spacing: 0.06em;
+}
+.counter {
+  font-family: 'Montserrat', Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: #363636;
+  letter-spacing: 0.04em;
 }
 
-.cover .cta-btn {
+/* giant background deco number */
+.deco {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 520px;
+  line-height: 0.80;
+  color: var(--deco);
+  position: absolute;
+  right: -24px;
+  top: 10px;
+  letter-spacing: -0.02em;
+  z-index: 0;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* pills */
+.pills { display:flex; gap:12px; flex-wrap:wrap; }
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 12px 24px;
+  font-family: 'Montserrat', Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9a9a9a;
+  letter-spacing: 0.04em;
+}
+.pill-dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
+
+/* CTA button */
+.btn {
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  background: #C5FF00;
+  background: var(--green);
   color: #000;
   font-family: 'Montserrat', Arial, sans-serif;
   font-size: 17px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 17px 34px;
-  border-radius: 7px;
+  letter-spacing: 0.10em;
+  padding: 18px 36px;
+  border-radius: 8px;
 }
+.btn-arrow { font-size: 20px; }
 
-/* ── SLIDE 2 — BRIEF (00) ── */
-
-.brief .inner {
-  padding: 72px 60px 0;
-  height: 100%;
-  position: relative;
-}
-.brief .headline {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 96px;
-  line-height: 0.95;
-  text-transform: uppercase;
-  margin-top: 140px;
-  margin-bottom: 36px;
-  max-width: 780px;
-  position: relative; z-index: 2;
-  letter-spacing: 0.01em;
-}
-.brief .body-text {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 21px;
-  font-weight: 400;
-  color: #aaa;
-  line-height: 1.65;
-  max-width: 680px;
-  margin-bottom: 52px;
-  position: relative; z-index: 2;
-}
-
-/* ── SLIDE 3 — FEATURE ── */
-
-.feature .inner {
-  padding: 72px 60px 0;
-  height: 100%;
-  position: relative;
-}
-.feature .headline {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 96px;
-  line-height: 0.95;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-top: 140px;
-  margin-bottom: 30px;
-  max-width: 780px;
-  position: relative; z-index: 2;
-}
-.feature .body-text {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 21px;
-  font-weight: 400;
-  color: #aaa;
-  line-height: 1.65;
-  max-width: 680px;
-  position: relative; z-index: 2;
-  margin-bottom: 52px;
-}
-.feature .img-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  position: relative; z-index: 2;
-}
-.feature .img-placeholder {
-  height: 220px;
-  background: #161a10;
-  border-radius: 10px;
-  border: 1px solid #222;
-}
-
-/* ── SLIDE 4 — NUMBERED LIST ── */
-
-.numlist .inner {
-  padding: 72px 60px 0;
-  height: 100%;
-  position: relative;
-}
-.numlist .headline {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 88px;
-  line-height: 0.95;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-bottom: 52px;
-  max-width: 780px;
-  position: relative; z-index: 2;
-}
-.numlist .items { display: flex; flex-direction: column; gap: 30px; position: relative; z-index: 2; }
-.numlist .item  { display: flex; align-items: flex-start; gap: 22px; }
-.numlist .item-num {
-  min-width: 48px; width: 48px; height: 48px;
-  background: #C5FF00;
+/* numbered circle */
+.num-circle {
+  min-width: 50px; width: 50px; height: 50px;
+  background: var(--green);
   color: #000;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-family: 'Montserrat', Arial, sans-serif;
   font-size: 20px; font-weight: 900;
-  margin-top: 4px;
 }
-.numlist .item-title {
+
+/* ════════════════════════════════════════
+   SLIDE 1 — COVER
+════════════════════════════════════════ */
+.s-cover .photo {
+  position: absolute;
+  inset: 0; z-index: 0;
+}
+.s-cover .photo img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+/* full dark gradient overlay */
+.s-cover .photo::after {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(to top,   #0A0C08 0%,  #0A0C08ee 22%, #0A0C0888 48%, transparent 72%),
+    linear-gradient(to right, #0A0C08 0%,  #0A0C08cc 30%, transparent 62%);
+  z-index: 1;
+}
+/* no-photo dark fallback */
+.s-cover .no-photo {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 70% 30%, #1a2410 0%, var(--bg) 70%);
+  z-index: 0;
+}
+
+.s-cover .content {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 0 64px 150px;
+  z-index: 5;
+}
+.s-cover .cover-hl {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 118px;
+  line-height: 0.90;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  margin-bottom: 24px;
+}
+.s-cover .cover-sub {
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 25px; font-weight: 800;
+  font-size: 19px; font-weight: 400;
+  color: #888;
+  line-height: 1.55;
+  max-width: 500px;
+  margin-bottom: 48px;
+}
+
+/* top eyebrow on cover */
+.s-cover .cover-top {
+  position: absolute;
+  top: 60px; left: 64px; right: 64px;
+  display: flex; justify-content: space-between; align-items: center;
+  z-index: 5;
+}
+
+/* ════════════════════════════════════════
+   SLIDE 2 — BRIEF / 00
+════════════════════════════════════════ */
+.s-brief .pad { padding: 72px 64px 0; height: 100%; position: relative; }
+
+.s-brief .hl {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 105px;
+  line-height: 0.90;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  margin-top: 72px;
+  margin-bottom: 36px;
+  max-width: 820px;
+  position: relative; z-index: 2;
+}
+.s-brief .body {
+  font-family: 'Montserrat', Arial, sans-serif;
+  font-size: 21px; font-weight: 400;
+  color: #7a7a7a;
+  line-height: 1.65;
+  max-width: 700px;
+  margin-bottom: 56px;
+  position: relative; z-index: 2;
+}
+
+/* ════════════════════════════════════════
+   SLIDE 3 — FEATURE
+════════════════════════════════════════ */
+.s-feat .pad { padding: 72px 64px 0; height: 100%; position: relative; }
+.s-feat .hl {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 105px;
+  line-height: 0.90;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  margin-top: 72px;
+  margin-bottom: 32px;
+  max-width: 820px;
+  position: relative; z-index: 2;
+}
+.s-feat .body {
+  font-family: 'Montserrat', Arial, sans-serif;
+  font-size: 21px; font-weight: 400;
+  color: #7a7a7a;
+  line-height: 1.65;
+  max-width: 700px;
+  margin-bottom: 52px;
+  position: relative; z-index: 2;
+}
+
+/* accent arrow between words */
+.arrow-accent {
+  color: var(--green);
+  font-family: 'Montserrat', Arial, sans-serif;
+  font-weight: 900;
+  font-size: 0.85em;
+  margin: 0 6px;
+}
+
+/* ════════════════════════════════════════
+   SLIDE 4 — NUMLIST
+════════════════════════════════════════ */
+.s-list .pad { padding: 72px 64px 0; height: 100%; position: relative; }
+.s-list .hl {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 95px;
+  line-height: 0.90;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  margin-bottom: 56px;
+  max-width: 820px;
+  position: relative; z-index: 2;
+}
+.s-list .items { display:flex; flex-direction:column; gap:34px; position:relative; z-index:2; }
+.s-list .item  { display:flex; align-items:flex-start; gap:24px; }
+.s-list .item-text .ititle {
+  font-family: 'Montserrat', Arial, sans-serif;
+  font-size: 26px; font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   line-height: 1.1;
-  margin-bottom: 7px;
+  margin-bottom: 8px;
+  color: var(--white);
 }
-.numlist .item-sub {
+.s-list .item-text .isub {
   font-family: 'Montserrat', Arial, sans-serif;
   font-size: 16px; font-weight: 400;
-  color: #777;
+  color: var(--gray);
 }
-.numlist .footer {
+.s-list .footer {
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 17px; color: #555;
-  margin-top: 40px;
-  position: relative; z-index: 2;
+  font-size: 17px; color: #4a4a4a;
+  margin-top: 44px;
+  position: relative; z-index:2;
 }
 
-/* ── SLIDE 5 — STATS ── */
-
-.stats .inner {
-  padding: 72px 60px 0;
-  height: 100%;
-  position: relative;
-}
-.stats .headline {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 96px;
-  line-height: 0.95;
+/* ════════════════════════════════════════
+   SLIDE 5 — STATS
+════════════════════════════════════════ */
+.s-stats .pad { padding: 72px 64px 0; height: 100%; position: relative; }
+.s-stats .hl {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 105px;
+  line-height: 0.90;
   text-transform: uppercase;
   letter-spacing: 0.01em;
-  margin-top: 140px;
-  margin-bottom: 30px;
-  max-width: 780px;
+  margin-top: 72px;
+  margin-bottom: 32px;
+  max-width: 820px;
   position: relative; z-index: 2;
 }
-.stats .body-text {
+.s-stats .body {
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 20px; font-weight: 400;
-  color: #aaa; line-height: 1.65;
-  max-width: 680px;
-  margin-bottom: 60px;
+  font-size: 21px; font-weight: 400;
+  color: #7a7a7a;
+  line-height: 1.65;
+  max-width: 700px;
+  margin-bottom: 68px;
   position: relative; z-index: 2;
 }
-.stats .numbers-row {
-  display: flex; gap: 70px;
-  position: relative; z-index: 2;
-}
-.stats .stat-val {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 110px;
-  line-height: 0.9;
-  color: #C5FF00;
+.s-stats .nums { display:flex; gap:72px; position:relative; z-index:2; }
+.s-stats .sval {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 130px;
+  line-height: 0.85;
+  color: var(--green);
   letter-spacing: -0.01em;
 }
-.stats .stat-label {
+.s-stats .slbl {
   font-family: 'Montserrat', Arial, sans-serif;
   font-size: 13px; font-weight: 700;
-  color: #555;
+  color: var(--gray2);
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  margin-top: 8px;
+  letter-spacing: 0.14em;
+  margin-top: 10px;
 }
 
-/* ── SLIDE 6 — CTA ── */
-
-.cta-slide .inner {
-  padding: 72px 60px;
+/* ════════════════════════════════════════
+   SLIDE 6 — CTA
+════════════════════════════════════════ */
+.s-cta .pad {
+  padding: 72px 64px;
   height: 100%;
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  padding-bottom: 140px;
+  padding-bottom: 150px;
 }
-.cta-slide .headline {
-  font-family: 'BebasNeue', 'Arial Black', Arial, sans-serif;
-  font-size: 100px;
-  line-height: 0.95;
+.s-cta .hl {
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 108px;
+  line-height: 0.90;
   text-transform: uppercase;
   letter-spacing: 0.01em;
   margin-bottom: 36px;
-  max-width: 780px;
+  max-width: 820px;
   position: relative; z-index: 2;
 }
-.cta-slide .body-text {
+.s-cta .body {
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 20px; font-weight: 400;
-  color: #aaa; line-height: 1.65;
-  max-width: 620px;
-  margin-bottom: 48px;
+  font-size: 21px; font-weight: 400;
+  color: #7a7a7a;
+  line-height: 1.65;
+  max-width: 700px;
+  margin-bottom: 52px;
   position: relative; z-index: 2;
-}
-.cta-slide .cta-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 16px;
-  background: #C5FF00;
-  color: #000;
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 19px; font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 20px 38px;
-  border-radius: 7px;
-  position: relative; z-index: 2;
-  width: fit-content;
 }
 """
 
-# ── slide builders ─────────────────────────────────────────────────────────────
+# ── helpers ────────────────────────────────────────────────────────────────────
 
-def _headline_html(lines: list) -> str:
+def hl_html(lines):
+    """Build headline HTML from line list."""
     out = ""
-    for line in lines:
-        cls = "h-green" if line.get("green") else "h-white"
-        out += f'<span class="{cls}">{line["text"]}</span><br>'
+    for ln in lines:
+        cls = "c-green" if ln.get("green") else "c-white"
+        out += f'<span class="{cls}">{ln["text"]}</span><br>'
     return out
 
-def slide_cover(data: dict, total: int, photo_src: str = "") -> str:
-    tag      = data.get("tag", "")
-    headline = _headline_html(data.get("headline", []))
-    subtext  = data.get("subtext", "")
-    cta      = data.get("cta", "ЛИСТАЙ")
-    brand    = data.get("brand", "husrav.ai")
+def eyebrow(text):
+    return f'<div class="eyebrow"><span class="eyebrow-dot"></span>{text}<span class="eyebrow-rule"></span></div>'
 
-    photo_src = photo_src or data.get("photo", "")
+def btm_bar(brand, idx=None, total=None):
+    counter = f'<div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>' if idx else ""
+    return f'<div class="btm"><div class="brand">{brand}</div>{counter}</div>'
 
-    if photo_src:
-        photo_html = f'<div class="photo-wrap"><img src="{photo_src}" /></div>'
-    else:
-        photo_html = '<div class="photo-placeholder"></div>'
+def pills_html(pills):
+    return '<div class="pills">' + "".join(
+        f'<div class="pill"><span class="pill-dot"></span>{p}</div>' for p in pills
+    ) + "</div>"
 
-    eyebrow_html = ""
-    if tag:
-        eyebrow_html = f'<div class="cover-eyebrow"><span class="dot"></span>{tag}</div>'
+def wrap(body_class, inner):
+    return f'<div class="slide {body_class}">{inner}</div>'
 
-    return f"""
-<div class="slide cover">
-  {photo_html}
-  <div class="content">
-    {eyebrow_html}
-    <div class="headline">{headline}</div>
-    <div class="subtext">{subtext}</div>
-    <div class="cta-btn"><span>{cta}</span><span>→</span></div>
-  </div>
-  <div class="bottom-bar" style="z-index:3">
-    <div class="brand">{brand}</div>
-  </div>
-</div>"""
+# ── slide builders ─────────────────────────────────────────────────────────────
 
+def build_cover(d, total, photo_src=""):
+    src  = photo_src or d.get("photo", "")
+    tag  = d.get("tag", "")
+    brand= d.get("brand", "husrav.ai")
+    cta  = d.get("cta", "ЛИСТАЙ")
 
-def slide_brief(data: dict, idx: int, total: int) -> str:
-    tag     = data.get("tag", "КРАТКО")
-    hl      = _headline_html(data.get("headline", []))
-    body    = data.get("body", "")
-    pills   = data.get("pills", [])
-    brand   = data.get("brand", "husrav.ai")
-    deco    = str(idx - 1).zfill(2)
-    pills_h = "".join(f'<div class="pill"><span class="pill-dot"></span>{p}</div>' for p in pills)
+    photo_el = (f'<div class="photo"><img src="{src}"/></div>' if src
+                else '<div class="no-photo"></div>')
 
-    return f"""
-<div class="slide brief">
-  <div class="inner">
-    <div class="tag">{tag}</div>
-    <div class="deco-num">{deco}</div>
-    <div class="headline">{hl}</div>
-    <div class="body-text">{body}</div>
-    <div class="pills" style="position:relative;z-index:2">{pills_h}</div>
-    <div class="bottom-bar">
-      <div class="brand">{brand}</div>
-      <div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>
-    </div>
-  </div>
-</div>"""
+    tag_el = eyebrow(tag) if tag else ""
+    brand_el = f'<div class="brand">{brand}</div>'
+
+    inner = f"""
+{photo_el}
+<div class="cover-top">
+  {tag_el}
+  {brand_el}
+</div>
+<div class="content">
+  <div class="cover-hl">{hl_html(d.get("headline",[]))}</div>
+  <div class="cover-sub">{d.get("subtext","")}</div>
+  <div class="btn"><span>{cta}</span><span class="btn-arrow">→</span></div>
+</div>
+{btm_bar(brand)}
+"""
+    return wrap("s-cover", inner)
 
 
-def slide_feature(data: dict, idx: int, total: int) -> str:
-    tag   = data.get("tag", "КАК ЭТО РАБОТАЕТ")
-    hl    = _headline_html(data.get("headline", []))
-    body  = data.get("body", "")
-    brand = data.get("brand", "husrav.ai")
+def build_brief(d, idx, total):
+    brand = d.get("brand", "husrav.ai")
     deco  = str(idx - 1).zfill(2)
-
-    return f"""
-<div class="slide feature">
-  <div class="inner">
-    <div class="tag">{tag}</div>
-    <div class="deco-num">{deco}</div>
-    <div class="headline">{hl}</div>
-    <div class="body-text">{body}</div>
-    <div class="bottom-bar">
-      <div class="brand">{brand}</div>
-      <div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>
-    </div>
-  </div>
+    inner = f"""
+<div class="pad">
+  {eyebrow(d.get("tag","КРАТКО"))}
+  <div class="deco">{deco}</div>
+  <div class="hl">{hl_html(d.get("headline",[]))}</div>
+  <div class="body">{d.get("body","")}</div>
+  <div style="position:relative;z-index:2">{pills_html(d.get("pills",[]))}</div>
+  {btm_bar(brand, idx, total)}
 </div>"""
+    return wrap("s-brief", inner)
 
 
-def slide_numlist(data: dict, idx: int, total: int) -> str:
-    tag   = data.get("tag", "ВОЗМОЖНОСТИ")
-    hl    = _headline_html(data.get("headline", []))
-    items = data.get("items", [])
-    footer= data.get("footer", "")
-    brand = data.get("brand", "husrav.ai")
-
-    items_h = ""
-    for i, item in enumerate(items, 1):
-        items_h += f"""<div class="item">
-          <div class="item-num">{i}</div>
-          <div>
-            <div class="item-title">{item.get('title','')}</div>
-            <div class="item-sub">{item.get('sub','')}</div>
-          </div>
-        </div>"""
-
-    footer_h = f'<div class="footer">{footer}</div>' if footer else ""
-
-    return f"""
-<div class="slide numlist">
-  <div class="inner">
-    <div class="tag">{tag}</div>
-    <div class="headline">{hl}</div>
-    <div class="items">{items_h}</div>
-    {footer_h}
-    <div class="bottom-bar">
-      <div class="brand">{brand}</div>
-      <div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>
-    </div>
-  </div>
-</div>"""
-
-
-def slide_stats(data: dict, idx: int, total: int) -> str:
-    tag   = data.get("tag", "ЦИФРЫ")
-    hl    = _headline_html(data.get("headline", []))
-    body  = data.get("body", "")
-    stats = data.get("stats", [])
-    brand = data.get("brand", "husrav.ai")
+def build_feature(d, idx, total):
+    brand = d.get("brand", "husrav.ai")
     deco  = str(idx - 1).zfill(2)
-
-    stats_h = "".join(f"""<div class="stat-item">
-      <div class="stat-val">{s.get('value','')}</div>
-      <div class="stat-label">{s.get('label','')}</div>
-    </div>""" for s in stats)
-
-    return f"""
-<div class="slide stats">
-  <div class="inner">
-    <div class="tag">{tag}</div>
-    <div class="deco-num">{deco}</div>
-    <div class="headline">{hl}</div>
-    <div class="body-text">{body}</div>
-    <div class="numbers-row">{stats_h}</div>
-    <div class="bottom-bar">
-      <div class="brand">{brand}</div>
-      <div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>
-    </div>
-  </div>
+    inner = f"""
+<div class="pad">
+  {eyebrow(d.get("tag","КАК ЭТО РАБОТАЕТ"))}
+  <div class="deco">{deco}</div>
+  <div class="hl">{hl_html(d.get("headline",[]))}</div>
+  <div class="body">{d.get("body","")}</div>
+  {btm_bar(brand, idx, total)}
 </div>"""
+    return wrap("s-feat", inner)
 
 
-def slide_cta(data: dict, idx: int, total: int) -> str:
-    tag   = data.get("tag", "ЗАБИРАЙ")
-    hl    = _headline_html(data.get("headline", []))
-    body  = data.get("body", "")
-    cta   = data.get("cta", "НАПИСАТЬ В КОММЕНТАРИИ")
-    brand = data.get("brand", "husrav.ai")
+def build_numlist(d, idx, total):
+    brand = d.get("brand", "husrav.ai")
+    items_h = "".join(f"""<div class="item">
+      <div class="num-circle">{i}</div>
+      <div class="item-text">
+        <div class="ititle">{it.get('title','')}</div>
+        <div class="isub">{it.get('sub','')}</div>
+      </div>
+    </div>""" for i, it in enumerate(d.get("items",[]), 1))
+
+    footer_h = f'<div class="footer">{d["footer"]}</div>' if d.get("footer") else ""
+
+    inner = f"""
+<div class="pad">
+  {eyebrow(d.get("tag","ВОЗМОЖНОСТИ"))}
+  <div class="hl">{hl_html(d.get("headline",[]))}</div>
+  <div class="items">{items_h}</div>
+  {footer_h}
+  {btm_bar(brand, idx, total)}
+</div>"""
+    return wrap("s-list", inner)
+
+
+def build_stats(d, idx, total):
+    brand = d.get("brand", "husrav.ai")
     deco  = str(idx - 1).zfill(2)
+    nums_h = "".join(f"""<div class="stat-item">
+      <div class="sval">{s.get('value','')}</div>
+      <div class="slbl">{s.get('label','')}</div>
+    </div>""" for s in d.get("stats",[]))
 
-    return f"""
-<div class="slide cta-slide">
-  <div class="inner">
-    <div class="tag">{tag}</div>
-    <div class="deco-num">{deco}</div>
-    <div class="headline">{hl}</div>
-    <div class="body-text">{body}</div>
-    <div class="cta-btn"><span>{cta}</span><span>→</span></div>
-    <div class="bottom-bar">
-      <div class="brand">{brand}</div>
-      <div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>
-    </div>
-  </div>
+    inner = f"""
+<div class="pad">
+  {eyebrow(d.get("tag","ЦИФРЫ"))}
+  <div class="deco">{deco}</div>
+  <div class="hl">{hl_html(d.get("headline",[]))}</div>
+  <div class="body">{d.get("body","")}</div>
+  <div class="nums">{nums_h}</div>
+  {btm_bar(brand, idx, total)}
 </div>"""
+    return wrap("s-stats", inner)
+
+
+def build_cta(d, idx, total):
+    brand = d.get("brand", "husrav.ai")
+    deco  = str(idx - 1).zfill(2)
+    inner = f"""
+<div class="pad">
+  {eyebrow(d.get("tag","ЗАБИРАЙ"))}
+  <div class="deco">{deco}</div>
+  <div class="hl">{hl_html(d.get("headline",[]))}</div>
+  <div class="body">{d.get("body","")}</div>
+  <div class="btn" style="position:relative;z-index:2">
+    <span>{d.get("cta","НАПИСАТЬ В КОММЕНТАРИИ")}</span>
+    <span class="btn-arrow">→</span>
+  </div>
+  {btm_bar(brand, idx, total)}
+</div>"""
+    return wrap("s-cta", inner)
 
 
 BUILDERS = {
-    "cover":   slide_cover,
-    "brief":   slide_brief,
-    "feature": slide_feature,
-    "numlist": slide_numlist,
-    "stats":   slide_stats,
-    "cta":     slide_cta,
+    "cover":   build_cover,
+    "brief":   build_brief,
+    "feature": build_feature,
+    "numlist": build_numlist,
+    "stats":   build_stats,
+    "cta":     build_cta,
 }
 
+# ── render ─────────────────────────────────────────────────────────────────────
 
-def build_html(slide_data: dict, idx: int, total: int, font_css: str, photo_src: str) -> str:
-    kind    = slide_data.get("type", "feature")
-    builder = BUILDERS.get(kind, slide_feature)
-
-    if kind == "cover":
-        body_html = builder(slide_data, total, photo_src)
-    else:
-        body_html = builder(slide_data, idx, total)
-
-    return f"""<!DOCTYPE html>
-<html lang="ru"><head>
+def make_html(slide, idx, total, fcss, photo_src):
+    kind = slide.get("type", "feature")
+    fn   = BUILDERS.get(kind, build_feature)
+    body = fn(slide, total, photo_src) if kind == "cover" else fn(slide, idx, total)
+    return f"""<!DOCTYPE html><html lang="ru"><head>
 <meta charset="UTF-8">
-<style>
-{font_css}
-{BASE_CSS}
-</style>
-</head><body>{body_html}</body></html>"""
+<style>{fcss}{BASE_CSS}</style>
+</head><body>{body}</body></html>"""
 
 
-def render_slides(slides: list, output_dir: str, prefix: str, photo_path: str = "") -> list:
-    font_css  = build_font_css()
-    photo_src = encode_photo(photo_path) if photo_path else ""
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    total  = len(slides)
-    paths  = []
+def render(slides, output_dir, prefix, photo_path=""):
+    fcss      = font_css()
+    photo_src = encode_photo(photo_path)
+    out       = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    total     = len(slides)
+    paths     = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(executable_path=CHROMIUM_PATH)
-        ctx     = browser.new_context(viewport={"width": SLIDE_W, "height": SLIDE_H})
-        page    = ctx.new_page()
-
+        br  = p.chromium.launch(executable_path=CHROMIUM_PATH)
+        ctx = br.new_context(viewport={"width": SLIDE_W, "height": SLIDE_H})
+        pg  = ctx.new_page()
         for i, slide in enumerate(slides, 1):
-            html = build_html(slide, i, total, font_css, photo_src)
-            page.set_content(html, wait_until="domcontentloaded")
-            out  = output_dir / f"{prefix}_{str(i).zfill(2)}.png"
-            page.screenshot(path=str(out),
-                            clip={"x": 0, "y": 0, "width": SLIDE_W, "height": SLIDE_H})
-            paths.append(str(out))
-            print(f"  ✓ {out.name}")
-
-        browser.close()
-
+            html = make_html(slide, i, total, fcss, photo_src)
+            pg.set_content(html, wait_until="domcontentloaded")
+            fp = out / f"{prefix}_{str(i).zfill(2)}.png"
+            pg.screenshot(path=str(fp),
+                          clip={"x":0,"y":0,"width":SLIDE_W,"height":SLIDE_H})
+            paths.append(str(fp))
+            print(f"  ✓ {fp.name}")
+        br.close()
     return paths
 
 
-# ── CLI ────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("content",    help="JSON file with slide data")
-    ap.add_argument("output_dir", nargs="?", default="output", help="Output folder")
-    ap.add_argument("--photo",    default="", help="Path to cover photo (JPG/PNG)")
+    ap.add_argument("content")
+    ap.add_argument("output_dir", nargs="?", default="output")
+    ap.add_argument("--photo", default="")
     args = ap.parse_args()
 
-    with open(args.content, "r", encoding="utf-8") as f:
+    with open(args.content, encoding="utf-8") as f:
         data = json.load(f)
 
     slides = data.get("slides", data) if isinstance(data, dict) else data
     prefix = data.get("prefix", "slide") if isinstance(data, dict) else "slide"
 
-    print(f"Generating {len(slides)} slides  [{SLIDE_W}×{SLIDE_H}px, 4:5]")
-    if args.photo:
-        print(f"Photo: {args.photo}")
-
-    paths = render_slides(slides, args.output_dir, prefix, args.photo)
-    print(f"\nDone! {len(paths)} slides → '{args.output_dir}/'")
+    print(f"Generating {len(slides)} slides [{SLIDE_W}×{SLIDE_H}px]")
+    paths = render(slides, args.output_dir, prefix, args.photo)
+    print(f"\nDone → '{args.output_dir}/'")
