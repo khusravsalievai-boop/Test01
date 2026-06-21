@@ -13,6 +13,35 @@ CHROMIUM_PATH = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
 FONTS_DIR     = Path(__file__).parent / "fonts"
 SLIDE_W, SLIDE_H = 1080, 1350
 
+# ── grain texture (film-grain SVG, embedded) ───────────────────────────────────
+_GRAIN_SVG = """<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256'>
+<filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.80'
+numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/>
+</filter><rect width='256' height='256' filter='url(#g)'/></svg>"""
+GRAIN_URL = "data:image/svg+xml;base64," + base64.b64encode(_GRAIN_SVG.encode()).decode()
+
+# ── 4-pointed star SVG (inline, lime green) ───────────────────────────────────
+STAR_SVG = """<svg viewBox='0 0 24 24' width='15' height='15'
+  xmlns='http://www.w3.org/2000/svg' style='display:inline-block;flex-shrink:0'>
+  <path d='M12 0 L13.8 10.2 L24 12 L13.8 13.8 L12 24 L10.2 13.8 L0 12 L10.2 10.2 Z'
+    fill='#C8FF00'/>
+</svg>"""
+
+# ── dots grid pattern (corner accent) ─────────────────────────────────────────
+def dots_grid(cols=5, rows=5, size=5, gap=14, color="rgba(200,255,0,0.18)"):
+    items = ""
+    for r in range(rows):
+        for c in range(cols):
+            x = c * (size + gap)
+            y = r * (size + gap)
+            items += f"<circle cx='{x+size/2}' cy='{y+size/2}' r='{size/2}' fill='{color}'/>"
+    w = cols * (size + gap)
+    h = rows * (size + gap)
+    svg = f"<svg xmlns='http://www.w3.org/2000/svg' width='{w}' height='{h}'>{items}</svg>"
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+DOTS_URL = dots_grid()
+
 # ── fonts ──────────────────────────────────────────────────────────────────────
 def _b64(filename):
     p = FONTS_DIR / filename
@@ -25,27 +54,13 @@ def font_css():
     me = _b64("Montserrat-ExtraBold.ttf")
     mx = _b64("Montserrat-Black.ttf")
     out = ""
-    # "Display" = Bebas for Latin digits/latin, Montserrat Black for Cyrillic
     if bb:
-        out += f"""@font-face{{font-family:'Display';font-weight:400;
-  src:url('data:font/truetype;base64,{bb}')format('truetype');
-  unicode-range:U+0020-007F,U+00A0-00FF;}}"""
+        out += f"@font-face{{font-family:'Display';font-weight:400;src:url('data:font/truetype;base64,{bb}')format('truetype');unicode-range:U+0020-007F,U+00A0-00FF;}}\n"
     if mx:
-        out += f"""@font-face{{font-family:'Display';font-weight:400;
-  src:url('data:font/truetype;base64,{mx}')format('truetype');
-  unicode-range:U+0400-04FF,U+0500-052F,U+1C80-1C8F;}}"""
-    if mr:
-        out += f"""@font-face{{font-family:'Montserrat';font-weight:400;
-  src:url('data:font/truetype;base64,{mr}')format('truetype');}}"""
-    if mb:
-        out += f"""@font-face{{font-family:'Montserrat';font-weight:700;
-  src:url('data:font/truetype;base64,{mb}')format('truetype');}}"""
-    if me:
-        out += f"""@font-face{{font-family:'Montserrat';font-weight:800;
-  src:url('data:font/truetype;base64,{me}')format('truetype');}}"""
-    if mx:
-        out += f"""@font-face{{font-family:'Montserrat';font-weight:900;
-  src:url('data:font/truetype;base64,{mx}')format('truetype');}}"""
+        out += f"@font-face{{font-family:'Display';font-weight:400;src:url('data:font/truetype;base64,{mx}')format('truetype');unicode-range:U+0400-04FF,U+0500-052F;}}\n"
+    for w, fn in [(400,mr),(700,mb),(800,me),(900,mx)]:
+        if fn:
+            out += f"@font-face{{font-family:'Montserrat';font-weight:{w};src:url('data:font/truetype;base64,{fn}')format('truetype');}}\n"
     return out
 
 def encode_photo(path):
@@ -57,77 +72,118 @@ def encode_photo(path):
     return f"data:image/{mime};base64,{base64.b64encode(data).decode()}"
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
-BASE_CSS = """
-:root {
-  --bg:      #0A0C08;
+def build_base_css():
+    return f"""
+:root {{
+  --bg:      #09090A;
   --green:   #C8FF00;
-  --white:   #F2F2EE;
-  --gray:    #5A5A5A;
-  --gray2:   #333;
-  --surface: #111408;
-  --border:  #1C2214;
-  --deco:    #111408;
-}
+  --white:   #F0F0EC;
+  --gray:    #565656;
+  --gray2:   #252525;
+  --surface: #0F1008;
+  --border:  #1C2010;
+}}
 
-* { margin:0; padding:0; box-sizing:border-box; }
-body { background:var(--bg); color:var(--white); }
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:var(--bg); }}
 
-.slide {
-  width: 1080px;
-  height: 1350px;
+/* ── SLIDE SHELL ── */
+.slide {{
+  width: {SLIDE_W}px;
+  height: {SLIDE_H}px;
   background: var(--bg);
   position: relative;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
+}}
 
-/* ── typography ── */
-.t-display {
+/* subtle ambient glow — top-right corner */
+.slide::before {{
+  content: '';
+  position: absolute;
+  top: -200px; right: -200px;
+  width: 700px; height: 700px;
+  background: radial-gradient(circle, rgba(100,180,0,0.07) 0%, transparent 65%);
+  z-index: 0;
+  pointer-events: none;
+}}
+
+/* film-grain overlay on every slide */
+.slide::after {{
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('{GRAIN_URL}');
+  background-size: 256px 256px;
+  background-repeat: repeat;
+  opacity: 0.045;
+  z-index: 300;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}}
+
+/* ── TYPOGRAPHY ── */
+.t-display {{
   font-family: 'Display', 'Arial Black', Arial, sans-serif;
   font-weight: 400;
+  text-transform: uppercase;
+  line-height: 0.90;
   letter-spacing: 0.01em;
-  text-transform: uppercase;
-  line-height: 0.92;
-}
-.t-ui {
-  font-family: 'Montserrat', Arial, sans-serif;
-}
+}}
+.t-ui {{ font-family: 'Montserrat', Arial, sans-serif; }}
 
-.c-white { color: var(--white); }
-.c-green { color: var(--green); }
-.c-gray  { color: var(--gray);  }
+/* colours */
+.c-white {{ color: var(--white); }}
+.c-green {{
+  color: var(--green);
+  text-shadow: 0 0 50px rgba(200,255,0,0.20), 0 0 120px rgba(200,255,0,0.08);
+}}
+.c-gray  {{ color: var(--gray); }}
 
-/* ── shared atoms ── */
-
-/* eyebrow tag */
-.eyebrow {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: var(--gray);
+/* ── EYEBROW ── */
+.eyebrow {{
   display: flex;
   align-items: center;
   gap: 10px;
-}
-.eyebrow-dot {
-  width: 6px; height: 6px;
-  background: var(--green);
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-/* thin rule below eyebrow */
-.eyebrow-rule {
-  width: 40px; height: 1px;
-  background: var(--green);
-  opacity: 0.5;
-  margin-left: 4px;
-}
+  font-family: 'Montserrat', Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.30em;
+  text-transform: uppercase;
+  color: var(--gray);
+}}
 
-/* bottom bar */
-.btm {
+/* ── DECO NUMBER — outline stroke, no fill ── */
+.deco {{
+  font-family: 'Display', 'Arial Black', Arial, sans-serif;
+  font-weight: 400;
+  font-size: 560px;
+  line-height: 0.78;
+  position: absolute;
+  right: -30px;
+  top: -10px;
+  letter-spacing: -0.02em;
+  z-index: 1;
+  user-select: none;
+  pointer-events: none;
+  /* outline-only — premium look */
+  -webkit-text-stroke: 2px rgba(80,140,10,0.40);
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}}
+
+/* ── DIVIDER LINE above bottom bar ── */
+.divider {{
+  position: absolute;
+  bottom: 104px;
+  left: 64px;
+  right: 64px;
+  height: 1px;
+  background: linear-gradient(to right, var(--border) 0%, var(--border) 70%, transparent 100%);
+  z-index: 5;
+}}
+
+/* ── BOTTOM BAR ── */
+.btm {{
   position: absolute;
   bottom: 52px;
   left: 64px;
@@ -136,326 +192,245 @@ body { background:var(--bg); color:var(--white); }
   justify-content: space-between;
   align-items: center;
   z-index: 10;
-}
-.brand {
+}}
+.brand {{
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 16px;
-  font-weight: 700;
-  color: #363636;
+  font-size: 16px; font-weight: 700;
+  color: #383838;
   letter-spacing: 0.06em;
-}
-.counter {
+}}
+.counter {{
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 16px;
-  font-weight: 700;
-  color: #363636;
+  font-size: 16px; font-weight: 700;
+  color: #383838;
   letter-spacing: 0.04em;
-}
+}}
 
-/* giant background deco number */
-.deco {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 520px;
-  line-height: 0.80;
-  color: var(--deco);
-  position: absolute;
-  right: -24px;
-  top: 10px;
-  letter-spacing: -0.02em;
-  z-index: 0;
-  user-select: none;
-  pointer-events: none;
-}
-
-/* pills */
-.pills { display:flex; gap:12px; flex-wrap:wrap; }
-.pill {
-  display: flex;
-  align-items: center;
-  gap: 9px;
+/* ── PILLS ── */
+.pills {{ display:flex; gap:12px; flex-wrap:wrap; }}
+.pill {{
+  display: flex; align-items: center; gap: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 100px;
-  padding: 12px 24px;
+  padding: 13px 26px;
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  color: #9a9a9a;
-  letter-spacing: 0.04em;
-}
-.pill-dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
+  font-size: 15px; font-weight: 600;
+  color: #888;
+  letter-spacing: 0.03em;
+}}
+.pill-dot {{ width:8px; height:8px; border-radius:50%; background:var(--green);
+  box-shadow: 0 0 8px rgba(200,255,0,0.5); }}
 
-/* CTA button */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 14px;
+/* ── CTA BUTTON ── */
+.btn {{
+  display: inline-flex; align-items: center; gap: 16px;
   background: var(--green);
   color: #000;
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 17px;
-  font-weight: 800;
+  font-size: 18px; font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.10em;
-  padding: 18px 36px;
-  border-radius: 8px;
-}
-.btn-arrow { font-size: 20px; }
+  padding: 20px 38px;
+  border-radius: 10px;
+  box-shadow: 0 0 40px rgba(200,255,0,0.25), 0 0 80px rgba(200,255,0,0.10);
+}}
 
-/* numbered circle */
-.num-circle {
-  min-width: 50px; width: 50px; height: 50px;
+/* ── NUMBERED CIRCLE ── */
+.num-circle {{
+  min-width: 52px; width: 52px; height: 52px;
   background: var(--green);
   color: #000;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 20px; font-weight: 900;
-}
+  font-size: 21px; font-weight: 900;
+  box-shadow: 0 0 20px rgba(200,255,0,0.30);
+}}
 
-/* ════════════════════════════════════════
-   SLIDE 1 — COVER
-════════════════════════════════════════ */
-.s-cover .photo {
+/* ── CORNER DOTS ACCENT ── */
+.dots-br {{
   position: absolute;
-  inset: 0; z-index: 0;
-}
-.s-cover .photo img {
-  width: 100%; height: 100%;
-  object-fit: cover;
-  object-position: top center;
-  display: block;
-}
-/* full dark gradient overlay */
-.s-cover .photo::after {
-  content: '';
-  position: absolute; inset: 0;
+  bottom: 140px; right: 56px;
+  width: 90px; height: 90px;
+  background-image: url('{DOTS_URL}');
+  background-repeat: no-repeat;
+  background-size: contain;
+  opacity: 0.6;
+  z-index: 2;
+  pointer-events: none;
+}}
+
+/* thin vertical green line accent */
+.vline {{
+  position: absolute;
+  top: 64px; left: 0;
+  width: 3px; height: 100px;
+  background: linear-gradient(to bottom, transparent, var(--green), transparent);
+  opacity: 0.5;
+  z-index: 5;
+}}
+
+/* ════════════ COVER ════════════ */
+.s-cover .photo {{
+  position: absolute; inset:0; z-index:0;
+}}
+.s-cover .photo img {{
+  width:100%; height:100%;
+  object-fit:cover; object-position:top center;
+}}
+.s-cover .photo::after {{
+  content:'';
+  position:absolute; inset:0;
   background:
-    linear-gradient(to top,   #0A0C08 0%,  #0A0C08ee 22%, #0A0C0888 48%, transparent 72%),
-    linear-gradient(to right, #0A0C08 0%,  #0A0C08cc 30%, transparent 62%);
-  z-index: 1;
-}
-/* no-photo dark fallback */
-.s-cover .no-photo {
-  position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 70% 30%, #1a2410 0%, var(--bg) 70%);
-  z-index: 0;
-}
+    linear-gradient(to top,   #09090A 0%, #09090Aee 20%, #09090Abb 42%, transparent 68%),
+    linear-gradient(to right, #09090A 0%, #09090Add 28%, transparent 58%);
+  z-index:1;
+}}
+.s-cover .no-photo {{
+  position:absolute; inset:0;
+  background: radial-gradient(ellipse at 70% 25%, #182210 0%, #09090A 55%);
+  z-index:0;
+}}
+.s-cover .cover-top {{
+  position:absolute; top:60px; left:64px; right:64px;
+  display:flex; justify-content:space-between; align-items:center;
+  z-index:5;
+}}
+.s-cover .content {{
+  position:absolute; bottom:0; left:0; right:0;
+  padding: 0 64px 148px;
+  z-index:5;
+}}
+.s-cover .cover-hl {{
+  font-family:'Display','Arial Black',Arial,sans-serif;
+  font-weight:400;
+  font-size:116px;
+  line-height:0.88;
+  text-transform:uppercase;
+  letter-spacing:0.01em;
+  margin-bottom:24px;
+}}
+.s-cover .cover-sub {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:19px; font-weight:400;
+  color:#777;
+  line-height:1.55;
+  max-width:520px;
+  margin-bottom:52px;
+}}
 
-.s-cover .content {
-  position: absolute;
-  bottom: 0; left: 0; right: 0;
-  padding: 0 64px 150px;
-  z-index: 5;
-}
-.s-cover .cover-hl {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 118px;
-  line-height: 0.90;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-bottom: 24px;
-}
-.s-cover .cover-sub {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 19px; font-weight: 400;
-  color: #888;
-  line-height: 1.55;
-  max-width: 500px;
-  margin-bottom: 48px;
-}
+/* ════════════ BRIEF ════════════ */
+.s-brief .pad {{ padding:72px 64px 0; height:100%; position:relative; }}
+.s-brief .hl {{
+  font-family:'Display','Arial Black',Arial,sans-serif; font-weight:400;
+  font-size:108px; line-height:0.88; text-transform:uppercase;
+  letter-spacing:0.01em;
+  margin-top:68px; margin-bottom:36px;
+  max-width:860px; position:relative; z-index:2;
+}}
+.s-brief .body {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:22px; font-weight:400; color:#6a6a6a;
+  line-height:1.65; max-width:720px;
+  margin-bottom:60px; position:relative; z-index:2;
+}}
 
-/* top eyebrow on cover */
-.s-cover .cover-top {
-  position: absolute;
-  top: 60px; left: 64px; right: 64px;
-  display: flex; justify-content: space-between; align-items: center;
-  z-index: 5;
-}
+/* ════════════ FEATURE ════════════ */
+.s-feat .pad {{ padding:72px 64px 0; height:100%; position:relative; }}
+.s-feat .hl {{
+  font-family:'Display','Arial Black',Arial,sans-serif; font-weight:400;
+  font-size:108px; line-height:0.88; text-transform:uppercase;
+  letter-spacing:0.01em;
+  margin-top:68px; margin-bottom:32px;
+  max-width:860px; position:relative; z-index:2;
+}}
+.s-feat .body {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:22px; font-weight:400; color:#6a6a6a;
+  line-height:1.65; max-width:720px;
+  margin-bottom:52px; position:relative; z-index:2;
+}}
 
-/* ════════════════════════════════════════
-   SLIDE 2 — BRIEF / 00
-════════════════════════════════════════ */
-.s-brief .pad { padding: 72px 64px 0; height: 100%; position: relative; }
+/* ════════════ NUMLIST ════════════ */
+.s-list .pad {{ padding:72px 64px 0; height:100%; position:relative; }}
+.s-list .hl {{
+  font-family:'Display','Arial Black',Arial,sans-serif; font-weight:400;
+  font-size:96px; line-height:0.88; text-transform:uppercase;
+  letter-spacing:0.01em;
+  margin-bottom:56px; max-width:860px;
+  position:relative; z-index:2;
+}}
+.s-list .items {{ display:flex; flex-direction:column; gap:36px; position:relative; z-index:2; }}
+.s-list .item {{ display:flex; align-items:flex-start; gap:26px; }}
+.s-list .ititle {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:27px; font-weight:800; text-transform:uppercase;
+  letter-spacing:0.03em; line-height:1.1;
+  margin-bottom:8px; color:var(--white);
+}}
+.s-list .isub {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:16px; font-weight:400; color:var(--gray);
+}}
+.s-list .footer {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:17px; color:#404040; margin-top:44px; position:relative; z-index:2;
+}}
 
-.s-brief .hl {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 105px;
-  line-height: 0.90;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-top: 72px;
-  margin-bottom: 36px;
-  max-width: 820px;
-  position: relative; z-index: 2;
-}
-.s-brief .body {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 21px; font-weight: 400;
-  color: #7a7a7a;
-  line-height: 1.65;
-  max-width: 700px;
-  margin-bottom: 56px;
-  position: relative; z-index: 2;
-}
+/* ════════════ STATS ════════════ */
+.s-stats .pad {{ padding:72px 64px 0; height:100%; position:relative; }}
+.s-stats .hl {{
+  font-family:'Display','Arial Black',Arial,sans-serif; font-weight:400;
+  font-size:108px; line-height:0.88; text-transform:uppercase;
+  letter-spacing:0.01em;
+  margin-top:68px; margin-bottom:32px;
+  max-width:860px; position:relative; z-index:2;
+}}
+.s-stats .body {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:22px; font-weight:400; color:#6a6a6a;
+  line-height:1.65; max-width:720px;
+  margin-bottom:72px; position:relative; z-index:2;
+}}
+.s-stats .nums {{ display:flex; gap:80px; position:relative; z-index:2; }}
+.s-stats .sval {{
+  font-family:'Display','Arial Black',Arial,sans-serif; font-weight:400;
+  font-size:140px; line-height:0.82;
+  color:var(--green);
+  text-shadow:0 0 60px rgba(200,255,0,0.25),0 0 120px rgba(200,255,0,0.10);
+  letter-spacing:-0.01em;
+}}
+.s-stats .slbl {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:13px; font-weight:700; color:var(--gray2);
+  text-transform:uppercase; letter-spacing:0.14em; margin-top:10px;
+}}
 
-/* ════════════════════════════════════════
-   SLIDE 3 — FEATURE
-════════════════════════════════════════ */
-.s-feat .pad { padding: 72px 64px 0; height: 100%; position: relative; }
-.s-feat .hl {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 105px;
-  line-height: 0.90;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-top: 72px;
-  margin-bottom: 32px;
-  max-width: 820px;
-  position: relative; z-index: 2;
-}
-.s-feat .body {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 21px; font-weight: 400;
-  color: #7a7a7a;
-  line-height: 1.65;
-  max-width: 700px;
-  margin-bottom: 52px;
-  position: relative; z-index: 2;
-}
-
-/* accent arrow between words */
-.arrow-accent {
-  color: var(--green);
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-weight: 900;
-  font-size: 0.85em;
-  margin: 0 6px;
-}
-
-/* ════════════════════════════════════════
-   SLIDE 4 — NUMLIST
-════════════════════════════════════════ */
-.s-list .pad { padding: 72px 64px 0; height: 100%; position: relative; }
-.s-list .hl {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 95px;
-  line-height: 0.90;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-bottom: 56px;
-  max-width: 820px;
-  position: relative; z-index: 2;
-}
-.s-list .items { display:flex; flex-direction:column; gap:34px; position:relative; z-index:2; }
-.s-list .item  { display:flex; align-items:flex-start; gap:24px; }
-.s-list .item-text .ititle {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 26px; font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  line-height: 1.1;
-  margin-bottom: 8px;
-  color: var(--white);
-}
-.s-list .item-text .isub {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 16px; font-weight: 400;
-  color: var(--gray);
-}
-.s-list .footer {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 17px; color: #4a4a4a;
-  margin-top: 44px;
-  position: relative; z-index:2;
-}
-
-/* ════════════════════════════════════════
-   SLIDE 5 — STATS
-════════════════════════════════════════ */
-.s-stats .pad { padding: 72px 64px 0; height: 100%; position: relative; }
-.s-stats .hl {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 105px;
-  line-height: 0.90;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-top: 72px;
-  margin-bottom: 32px;
-  max-width: 820px;
-  position: relative; z-index: 2;
-}
-.s-stats .body {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 21px; font-weight: 400;
-  color: #7a7a7a;
-  line-height: 1.65;
-  max-width: 700px;
-  margin-bottom: 68px;
-  position: relative; z-index: 2;
-}
-.s-stats .nums { display:flex; gap:72px; position:relative; z-index:2; }
-.s-stats .sval {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 130px;
-  line-height: 0.85;
-  color: var(--green);
-  letter-spacing: -0.01em;
-}
-.s-stats .slbl {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 13px; font-weight: 700;
-  color: var(--gray2);
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  margin-top: 10px;
-}
-
-/* ════════════════════════════════════════
-   SLIDE 6 — CTA
-════════════════════════════════════════ */
-.s-cta .pad {
-  padding: 72px 64px;
-  height: 100%;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding-bottom: 150px;
-}
-.s-cta .hl {
-  font-family: 'Display', 'Arial Black', Arial, sans-serif;
-  font-weight: 400;
-  font-size: 108px;
-  line-height: 0.90;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  margin-bottom: 36px;
-  max-width: 820px;
-  position: relative; z-index: 2;
-}
-.s-cta .body {
-  font-family: 'Montserrat', Arial, sans-serif;
-  font-size: 21px; font-weight: 400;
-  color: #7a7a7a;
-  line-height: 1.65;
-  max-width: 700px;
-  margin-bottom: 52px;
-  position: relative; z-index: 2;
-}
+/* ════════════ CTA ════════════ */
+.s-cta .pad {{
+  padding:72px 64px;
+  height:100%; position:relative;
+  display:flex; flex-direction:column;
+  justify-content:flex-end; padding-bottom:152px;
+}}
+.s-cta .hl {{
+  font-family:'Display','Arial Black',Arial,sans-serif; font-weight:400;
+  font-size:110px; line-height:0.88; text-transform:uppercase;
+  letter-spacing:0.01em;
+  margin-bottom:36px; max-width:860px; position:relative; z-index:2;
+}}
+.s-cta .body {{
+  font-family:'Montserrat',Arial,sans-serif;
+  font-size:22px; font-weight:400; color:#6a6a6a;
+  line-height:1.65; max-width:720px;
+  margin-bottom:52px; position:relative; z-index:2;
+}}
 """
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def hl_html(lines):
-    """Build headline HTML from line list."""
     out = ""
     for ln in lines:
         cls = "c-green" if ln.get("green") else "c-white"
@@ -463,46 +438,42 @@ def hl_html(lines):
     return out
 
 def eyebrow(text):
-    return f'<div class="eyebrow"><span class="eyebrow-dot"></span>{text}<span class="eyebrow-rule"></span></div>'
+    return f'<div class="eyebrow">{STAR_SVG}<span>{text}</span></div>'
 
-def btm_bar(brand, idx=None, total=None):
-    counter = f'<div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>' if idx else ""
-    return f'<div class="btm"><div class="brand">{brand}</div>{counter}</div>'
+def btm(brand, idx=None, total=None):
+    ctr = f'<div class="counter">{str(idx).zfill(2)} / {str(total).zfill(2)}</div>' if idx else ""
+    return f'<div class="divider"></div><div class="btm"><div class="brand">{brand}</div>{ctr}</div>'
 
 def pills_html(pills):
     return '<div class="pills">' + "".join(
         f'<div class="pill"><span class="pill-dot"></span>{p}</div>' for p in pills
     ) + "</div>"
 
-def wrap(body_class, inner):
-    return f'<div class="slide {body_class}">{inner}</div>'
+def wrap(cls, inner):
+    return f'<div class="slide {cls}">{inner}</div>'
 
 # ── slide builders ─────────────────────────────────────────────────────────────
 
 def build_cover(d, total, photo_src=""):
-    src  = photo_src or d.get("photo", "")
-    tag  = d.get("tag", "")
-    brand= d.get("brand", "husrav.ai")
-    cta  = d.get("cta", "ЛИСТАЙ")
+    src   = photo_src or d.get("photo", "")
+    tag   = d.get("tag", "")
+    brand = d.get("brand", "husrav.ai")
+    cta   = d.get("cta", "ЛИСТАЙ")
 
     photo_el = (f'<div class="photo"><img src="{src}"/></div>' if src
                 else '<div class="no-photo"></div>')
-
-    tag_el = eyebrow(tag) if tag else ""
-    brand_el = f'<div class="brand">{brand}</div>'
+    tag_el   = eyebrow(tag) if tag else ""
 
     inner = f"""
 {photo_el}
-<div class="cover-top">
-  {tag_el}
-  {brand_el}
-</div>
+<div class="cover-top">{tag_el}<div class="brand">{brand}</div></div>
 <div class="content">
   <div class="cover-hl">{hl_html(d.get("headline",[]))}</div>
   <div class="cover-sub">{d.get("subtext","")}</div>
-  <div class="btn"><span>{cta}</span><span class="btn-arrow">→</span></div>
+  <div class="btn"><span>{cta}</span><span>→</span></div>
 </div>
-{btm_bar(brand)}
+<div class="divider"></div>
+<div class="btm"><div class="brand">{brand}</div></div>
 """
     return wrap("s-cover", inner)
 
@@ -514,10 +485,12 @@ def build_brief(d, idx, total):
 <div class="pad">
   {eyebrow(d.get("tag","КРАТКО"))}
   <div class="deco">{deco}</div>
+  <div class="vline"></div>
   <div class="hl">{hl_html(d.get("headline",[]))}</div>
   <div class="body">{d.get("body","")}</div>
   <div style="position:relative;z-index:2">{pills_html(d.get("pills",[]))}</div>
-  {btm_bar(brand, idx, total)}
+  <div class="dots-br"></div>
+  {btm(brand, idx, total)}
 </div>"""
     return wrap("s-brief", inner)
 
@@ -529,52 +502,50 @@ def build_feature(d, idx, total):
 <div class="pad">
   {eyebrow(d.get("tag","КАК ЭТО РАБОТАЕТ"))}
   <div class="deco">{deco}</div>
+  <div class="vline"></div>
   <div class="hl">{hl_html(d.get("headline",[]))}</div>
   <div class="body">{d.get("body","")}</div>
-  {btm_bar(brand, idx, total)}
+  <div class="dots-br"></div>
+  {btm(brand, idx, total)}
 </div>"""
     return wrap("s-feat", inner)
 
 
 def build_numlist(d, idx, total):
-    brand = d.get("brand", "husrav.ai")
+    brand   = d.get("brand", "husrav.ai")
     items_h = "".join(f"""<div class="item">
       <div class="num-circle">{i}</div>
-      <div class="item-text">
-        <div class="ititle">{it.get('title','')}</div>
-        <div class="isub">{it.get('sub','')}</div>
-      </div>
+      <div><div class="ititle">{it.get('title','')}</div>
+           <div class="isub">{it.get('sub','')}</div></div>
     </div>""" for i, it in enumerate(d.get("items",[]), 1))
-
     footer_h = f'<div class="footer">{d["footer"]}</div>' if d.get("footer") else ""
-
     inner = f"""
 <div class="pad">
   {eyebrow(d.get("tag","ВОЗМОЖНОСТИ"))}
   <div class="hl">{hl_html(d.get("headline",[]))}</div>
   <div class="items">{items_h}</div>
   {footer_h}
-  {btm_bar(brand, idx, total)}
+  {btm(brand, idx, total)}
 </div>"""
     return wrap("s-list", inner)
 
 
 def build_stats(d, idx, total):
-    brand = d.get("brand", "husrav.ai")
-    deco  = str(idx - 1).zfill(2)
-    nums_h = "".join(f"""<div class="stat-item">
+    brand  = d.get("brand", "husrav.ai")
+    deco   = str(idx - 1).zfill(2)
+    nums_h = "".join(f"""<div>
       <div class="sval">{s.get('value','')}</div>
       <div class="slbl">{s.get('label','')}</div>
     </div>""" for s in d.get("stats",[]))
-
     inner = f"""
 <div class="pad">
   {eyebrow(d.get("tag","ЦИФРЫ"))}
   <div class="deco">{deco}</div>
+  <div class="vline"></div>
   <div class="hl">{hl_html(d.get("headline",[]))}</div>
   <div class="body">{d.get("body","")}</div>
   <div class="nums">{nums_h}</div>
-  {btm_bar(brand, idx, total)}
+  {btm(brand, idx, total)}
 </div>"""
     return wrap("s-stats", inner)
 
@@ -586,13 +557,13 @@ def build_cta(d, idx, total):
 <div class="pad">
   {eyebrow(d.get("tag","ЗАБИРАЙ"))}
   <div class="deco">{deco}</div>
+  <div class="vline"></div>
   <div class="hl">{hl_html(d.get("headline",[]))}</div>
   <div class="body">{d.get("body","")}</div>
-  <div class="btn" style="position:relative;z-index:2">
-    <span>{d.get("cta","НАПИСАТЬ В КОММЕНТАРИИ")}</span>
-    <span class="btn-arrow">→</span>
+  <div class="btn" style="position:relative;z-index:2;width:fit-content">
+    <span>{d.get("cta","НАПИСАТЬ В КОММЕНТАРИИ")}</span><span>→</span>
   </div>
-  {btm_bar(brand, idx, total)}
+  {btm(brand, idx, total)}
 </div>"""
     return wrap("s-cta", inner)
 
@@ -608,18 +579,19 @@ BUILDERS = {
 
 # ── render ─────────────────────────────────────────────────────────────────────
 
-def make_html(slide, idx, total, fcss, photo_src):
+def make_html(slide, idx, total, fcss, base_css, photo_src):
     kind = slide.get("type", "feature")
     fn   = BUILDERS.get(kind, build_feature)
     body = fn(slide, total, photo_src) if kind == "cover" else fn(slide, idx, total)
     return f"""<!DOCTYPE html><html lang="ru"><head>
 <meta charset="UTF-8">
-<style>{fcss}{BASE_CSS}</style>
+<style>{fcss}{base_css}</style>
 </head><body>{body}</body></html>"""
 
 
 def render(slides, output_dir, prefix, photo_path=""):
     fcss      = font_css()
+    base_css  = build_base_css()
     photo_src = encode_photo(photo_path)
     out       = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -631,11 +603,10 @@ def render(slides, output_dir, prefix, photo_path=""):
         ctx = br.new_context(viewport={"width": SLIDE_W, "height": SLIDE_H})
         pg  = ctx.new_page()
         for i, slide in enumerate(slides, 1):
-            html = make_html(slide, i, total, fcss, photo_src)
+            html = make_html(slide, i, total, fcss, base_css, photo_src)
             pg.set_content(html, wait_until="domcontentloaded")
-            fp = out / f"{prefix}_{str(i).zfill(2)}.png"
-            pg.screenshot(path=str(fp),
-                          clip={"x":0,"y":0,"width":SLIDE_W,"height":SLIDE_H})
+            fp   = out / f"{prefix}_{str(i).zfill(2)}.png"
+            pg.screenshot(path=str(fp), clip={"x":0,"y":0,"width":SLIDE_W,"height":SLIDE_H})
             paths.append(str(fp))
             print(f"  ✓ {fp.name}")
         br.close()
